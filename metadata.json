@@ -1,0 +1,7 @@
+{
+  "name": "Travel Itinerary Generator",
+  "description": "A web application that generates personalized travel itineraries using the Gemini API based on user input.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
