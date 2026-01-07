@@ -6,54 +6,58 @@ import { TravelPreferences, GeneratedItinerary, ItineraryResult } from '../types
  * that might include markdown fences or leading/trailing text.
  */
 function extractJsonFromString(input: string): string | null {
-  const firstBrace = input.indexOf('{');
-  const lastBrace = input.lastIndexOf('}');
+  // Step 1: Aggressively remove common markdown fences and any text before the first potential JSON start.
+  // This regex handles ```json, ```javascript, ```text, ``` and also just ```.
+  let cleanedInput = input.replace(/```(?:json|javascript|text)?\s*|```/g, '').trim();
 
-  // Handle case where it might be an array
-  const firstBracket = input.indexOf('[');
-  const lastBracket = input.lastIndexOf(']');
+  // Find the first and last occurrence of { or [
+  let firstCharIndex = -1;
+  let lastCharIndex = -1;
 
-  let jsonCandidate = null;
+  const firstBrace = cleanedInput.indexOf('{');
+  const firstBracket = cleanedInput.indexOf('[');
 
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    jsonCandidate = input.substring(firstBrace, lastBrace + 1);
-  } else if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-    jsonCandidate = input.substring(firstBracket, lastBracket + 1);
+  // Determine the true start of the JSON (either { or [)
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    firstCharIndex = firstBrace;
+  } else if (firstBracket !== -1) {
+    firstCharIndex = firstBracket;
   }
 
+  // If no starting brace/bracket, no JSON to extract
+  if (firstCharIndex === -1) {
+    return null;
+  }
+
+  // Find the last corresponding closing brace or bracket
+  // We need to match based on the type of the first character found
+  const typeOfStart = cleanedInput[firstCharIndex];
+  if (typeOfStart === '{') {
+    lastCharIndex = cleanedInput.lastIndexOf('}');
+  } else if (typeOfStart === '[') {
+    lastCharIndex = cleanedInput.lastIndexOf(']');
+  }
+
+  // Ensure both start and end characters are found and in correct order
+  if (lastCharIndex === -1 || lastCharIndex < firstCharIndex) {
+    return null;
+  }
+
+  const jsonCandidate = cleanedInput.substring(firstCharIndex, lastCharIndex + 1);
+
+  // Step 2: Attempt to parse the extracted candidate
   if (jsonCandidate) {
     try {
       JSON.parse(jsonCandidate);
       return jsonCandidate;
     } catch (e) {
-      // Not valid JSON, try to be more forgiving by removing common markdown
-      const cleanedInput = input.replace(/```json|```javascript|```/g, '').trim();
-      const newFirstBrace = cleanedInput.indexOf('{');
-      const newLastBrace = cleanedInput.lastIndexOf('}');
-      if (newFirstBrace !== -1 && newLastBrace !== -1 && newLastBrace > newFirstBrace) {
-        const finalCandidate = cleanedInput.substring(newFirstBrace, newLastBrace + 1);
-        try {
-          JSON.parse(finalCandidate);
-          return finalCandidate;
-        } catch (innerError) {
-          // Still not valid
-        }
-      }
-      const newFirstBracket = cleanedInput.indexOf('[');
-      const newLastBracket = cleanedInput.lastIndexOf(']');
-      if (newFirstBracket !== -1 && newLastBracket !== -1 && newLastBracket > newFirstBracket) {
-        const finalCandidate = cleanedInput.substring(newFirstBracket, newLastBracket + 1);
-        try {
-          JSON.parse(finalCandidate);
-          return finalCandidate;
-        } catch (innerError) {
-          // Still not valid
-        }
-      }
+      console.warn("Failed to parse extracted JSON candidate:", e);
+      // If parsing fails even after cleaning, it's not valid JSON
+      return null;
     }
   }
 
-  return null; // No valid JSON object or array found after attempts
+  return null; // Should not reach here if jsonCandidate is not null and parsing succeeded.
 }
 
 /**
@@ -72,19 +76,18 @@ export async function generateItinerary(
 
   const { destination, duration, interests, budget, currency, latitude, longitude } = preferences;
 
-  let prompt = `Generate a detailed and creative travel itinerary for a ${duration}-day trip to ${destination}.
-  The travelers are interested in ${interests}. They have a budget of ${budget} ${currency}.
+  let prompt = `Buat itinerary perjalanan yang detail dan kreatif untuk perjalanan ${duration} hari ke ${destination}.
+  Wisatawan tertarik pada ${interests}. Mereka memiliki anggaran sebesar ${budget} ${currency}.
   
-  Please include:
-  - An overview of the trip.
-  - A day-by-day breakdown with a theme and specific activities (with suggested times).
-  - Practical packing suggestions.
-  - Any important notes for the trip.
-  - A summary or analysis of how the budget of ${budget} ${currency} might influence the trip planning or what it can afford.
+  Harap sertakan:
+  - Ikhtisar perjalanan.
+  - Rincian rencana harian dengan tema dan aktivitas spesifik (dengan waktu yang disarankan).
+  - Saran barang bawaan yang praktis.
+  - Catatan penting untuk perjalanan.
+  - Ringkasan atau analisis tentang bagaimana anggaran ${budget} ${currency} dapat memengaruhi perencanaan perjalanan atau apa yang bisa didapatkan.
   
-  Jika relevan, sertakan saran yang berfokus pada Indonesia untuk rekomendasi umum dan penelusuran.
-  
-  The itinerary should be in JSON format.`;
+  Buat itinerary dalam format JSON, dan semua teks dalam properti JSON harus dalam Bahasa Indonesia.
+  Jika relevan, sertakan saran yang berfokus pada Indonesia untuk rekomendasi umum dan penelusuran.`;
 
   const tools = [];
   const toolConfig: any = {};
@@ -93,7 +96,7 @@ export async function generateItinerary(
 
   if (latitude && longitude) {
     useMapsGrounding = true;
-    prompt += ` Current user location is approximately latitude ${latitude}, longitude ${longitude}.`;
+    prompt += ` Lokasi pengguna saat ini kira-kira lintang ${latitude}, bujur ${longitude}.`;
     tools.push({ googleMaps: {} });
     toolConfig.retrievalConfig = {
       latLng: {
@@ -171,8 +174,7 @@ export async function generateItinerary(
     let parsedItinerary: GeneratedItinerary;
 
     if (!cleanedJsonString) {
-      console.warn("Could not extract valid JSON from Gemini response. Falling back to plain text interpretation.");
-      // Fallback: If no valid JSON can be extracted, use the raw response as overview.
+      console.warn("Tidak dapat mengekstrak JSON valid dari respons Gemini. Kembali ke interpretasi teks biasa.");
       parsedItinerary = {
         destination: preferences.destination,
         duration: preferences.duration,
@@ -182,11 +184,9 @@ export async function generateItinerary(
         notes: "Itinerary tidak dapat diuraikan ke format terstruktur. Silakan lihat bagian ikhtisar untuk detail dan periksa tautan sumber.",
         budgetSummary: `Anggaran: ${budget} ${currency}.`,
       };
-      // For this fallback, we also don't process source URLs, as the structure might be completely off.
       return { itineraryData: parsedItinerary, sourceUrls: [] };
     }
 
-    // Now proceed with parsing the cleaned JSON string
     if (useMapsGrounding) {
       try {
         parsedItinerary = JSON.parse(cleanedJsonString) as GeneratedItinerary;
@@ -204,7 +204,7 @@ export async function generateItinerary(
           notes: "Itinerary tidak dapat diuraikan ke format terstruktur. Silakan lihat bagian ikhtisar untuk detail dan periksa tautan sumber.",
           budgetSummary: `Anggaran: ${budget} ${currency}.`,
         };
-        return { itineraryData: parsedItinerary, sourceUrls: [] }; // No source URLs if parsing fails here.
+        return { itineraryData: parsedItinerary, sourceUrls: [] };
       }
     } else {
       try {
